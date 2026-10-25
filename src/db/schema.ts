@@ -35,13 +35,16 @@ export const users = pgTable("users", {
   callSign: varchar("call_sign", { length: 40 }).notNull().unique(),
   fullName: varchar("full_name", { length: 120 }).notNull(),
   rank: varchar("rank", { length: 12 }).notNull(),
-  role: varchar("role", { length: 16 }).notNull().default("field"), // field | medic | command
+  role: varchar("role", { length: 16 }).notNull().default("field"), // field | medic | command | admin
   unitCode: varchar("unit_code", { length: 24 })
     .notNull()
     .references(() => units.code),
   mosDesignation: varchar("mos_designation", { length: 40 }),
   tcccLevel: varchar("tccc_level", { length: 24 }).notNull().default("CLS"), // ALL | CLS | CMC
   status: varchar("status", { length: 16 }).notNull().default("active"), // active | suspended
+    passwordHash: text("password_hash"),
+  failedLogins: integer("failed_logins").notNull().default(0),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

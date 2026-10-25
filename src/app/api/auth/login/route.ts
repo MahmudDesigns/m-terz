@@ -1,36 +1,58 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { users, netEvents } from "@/db/schema";
+import { verifyPassword } from "@/lib/password";
 import { setSession } from "@/lib/crypto";
-import { logEvent } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
+const MAX_FAILS = 5;
+const LOCK_MS = 15 * 60 * 1000;
+
 export async function POST(req: Request) {
-  let body: { userId?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ ok: false, error: "BAD REQUEST" }, { status: 400 });
+  const body = await req.json().catch(() => null);
+  const callSign = String(body?.callSign ?? "").trim().toUpperCase();
+  const password = String(body?.password ?? "");
+
+  const fail = () =>
+    Response.json({ ok: false, error: "INVALID CALLSIGN OR PASSCODE" }, { status: 401 });
+
+  if (!callSign || !password) return fail();
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(sql`upper(${users.callSign})`, callSign))
+    .limit(1);
+
+  if (!user || user.status !== "active" || !user.passwordHash) return fail();
+
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    return Response.json(
+      { ok: false, error: "ACCOUNT LOCKED. TRY AGAIN IN 15 MINUTES" },
+      { status: 429 },
+    );
   }
-  if (!body.userId) {
-    return Response.json({ ok: false, error: "IDENTITY REQUIRED" }, { status: 400 });
+
+  if (!verifyPassword(password, user.passwordHash)) {
+    const fails = user.failedLogins + 1;
+    await db
+      .update(users)
+      .set({
+        failedLogins: fails >= MAX_FAILS ? 0 : fails,
+        lockedUntil: fails >= MAX_FAILS ? new Date(Date.now() + LOCK_MS) : null,
+      })
+      .where(eq(users.id, user.id));
+    return fail();
   }
-  const rows = await db.select().from(users).where(eq(users.id, body.userId)).limit(1);
-  const u = rows[0];
-  if (!u || u.status !== "active") {
-    return Response.json({ ok: false, error: "IDENTITY NOT RECOGNIZED" }, { status: 403 });
-  }
-  await setSession(u.id);
-  await logEvent("auth", `${u.callSign} AUTHENTICATED ON SECURE TERMINAL`, null, u.callSign);
-  return Response.json({
-    ok: true,
-    user: {
-      id: u.id,
-      callSign: u.callSign,
-      rank: u.rank,
-      role: u.role,
-      unitCode: u.unitCode,
-    },
+
+  await db.update(users).set({ failedLogins: 0, lockedUntil: null }).where(eq(users.id, user.id));
+  await db.insert(netEvents).values({
+    kind: "auth",
+    message: `${user.callSign} authenticated`,
+    actor: user.callSign,
   });
+  await setSession(user.id);
+
+  return Response.json({ ok: true, role: user.role });
 }

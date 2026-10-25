@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Cross, Fingerprint, Lock, ShieldCheck, Wifi, WifiOff } from "lucide-react";
-import type { RosterUser } from "@/lib/types";
-import { ROLE_LABEL } from "@/lib/domain";
+import { Cross, Lock, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 import { Led } from "@/components/ui";
 
 const BOOT_LINES = [
@@ -54,9 +52,9 @@ function RadarMark() {
 }
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [users, setUsers] = useState<RosterUser[]>([]);
-  const [sel, setSel] = useState<RosterUser | null>(null);
+    const router = useRouter();
+  const [callSign, setCallSign] = useState("");
+  const [password, setPassword] = useState("");
   const [phase, setPhase] = useState<"idle" | "boot" | "deny">("idle");
   const [bootLine, setBootLine] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -64,23 +62,14 @@ export default function LoginPage() {
   const [online] = useState(true);
 
   useEffect(() => {
-    fetch("/api/roster")
-      .then((r) => r.json())
-      .then((d) => setUsers(d.users ?? []))
-      .catch(() => setUsers([]));
     const iv = setInterval(() => setTick((t) => t + 1), 2600);
     return () => clearInterval(iv);
   }, []);
 
-  const grouped = useMemo(() => {
-    const order = ["command", "medic", "field"];
-    return order
-      .map((role) => ({ role, list: users.filter((u) => u.role === role) }))
-      .filter((g) => g.list.length > 0);
-  }, [users]);
+  const canSubmit = callSign.trim().length > 0 && password.length > 0;
 
   const authenticate = async () => {
-    if (!sel || phase === "boot") return;
+    if (!canSubmit || phase === "boot") return;
     setPhase("boot");
     setBootLine(0);
     setError(null);
@@ -92,14 +81,15 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: sel.id }),
+        body: JSON.stringify({ callSign, password }),
       });
       const d = await res.json();
       if (!res.ok || !d.ok) throw new Error(d.error ?? "AUTH FAILED");
-      router.replace("/");
+            router.replace(d.role === "admin" ? "/sysadmin" : "/");
     } catch (e) {
       setPhase("deny");
       setError(e instanceof Error ? e.message : "AUTH FAILED");
+      setPassword("");
       setTimeout(() => setPhase("idle"), 2200);
     }
   };
@@ -165,63 +155,51 @@ export default function LoginPage() {
               IDENTIFY YOURSELF
             </h2>
             <div className="mt-1 flex items-center gap-2 font-data text-[10px] tracking-[0.15em] text-dim">
-              {online ? <Wifi size={10} /> : <WifiOff size={10} />} SELECT CALLSIGN — SESSION IS HMAC-SIGNED, 12H TTL
+              {online ? <Wifi size={10} /> : <WifiOff size={10} />} ENTER CALLSIGN AND PASSCODE — SESSION IS HMAC-SIGNED, 12H TTL
             </div>
           </div>
 
-          <div className="grid-bg flex-1 space-y-5 overflow-y-auto p-6">
-            {grouped.map((g) => (
-              <div key={g.role}>
-                <div className="font-data mb-2 text-[10px] tracking-[0.3em] text-faint">
-                  {ROLE_LABEL[g.role]}
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {g.list.map((u) => {
-                    const active = sel?.id === u.id;
-                    return (
-                      <button
-                        key={u.id}
-                        onClick={() => setSel(u)}
-                        className={`t-corners relative border px-3 py-2.5 text-left transition-colors ${
-                          active
-                            ? "border-acc bg-acc/10"
-                            : "border-line bg-panel2/60 hover:border-line-strong hover:bg-panel2"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-disp text-base leading-tight font-bold tracking-wide text-ink">
-                            {u.rank} {u.callSign}
-                          </span>
-                          {active && <Fingerprint size={15} className="text-acc" />}
-                        </div>
-                        <div className="mt-0.5 font-data text-[10px] tracking-[0.1em] text-faint uppercase">
-                          {u.fullName} · {u.unitCode}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            {users.length === 0 && (
-              <div className="py-10 text-center font-data text-[11px] tracking-[0.2em] text-faint">
-                CONTACTING GARRISON ROSTER …
-              </div>
-            )}
+                    <div className="grid-bg flex-1 space-y-5 p-6">
+            <div>
+              <label className="font-data mb-2 block text-[10px] tracking-[0.3em] text-faint">
+                CALLSIGN
+              </label>
+              <input
+                value={callSign}
+                onChange={(e) => setCallSign(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="characters"
+                placeholder="e.g. SABER-6"
+                className="font-data w-full border border-line bg-panel2/60 px-3 py-3 text-sm tracking-[0.1em] text-ink uppercase outline-none focus:border-acc"
+              />
+            </div>
+            <div>
+              <label className="font-data mb-2 block text-[10px] tracking-[0.3em] text-faint">
+                PASSCODE
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && authenticate()}
+                autoComplete="current-password"
+                className="font-data w-full border border-line bg-panel2/60 px-3 py-3 text-sm tracking-[0.1em] text-ink outline-none focus:border-acc"
+              />
+            </div>
           </div>
 
           <div className="border-t border-line p-6">
-            <button
+                        <button
               onClick={authenticate}
-              disabled={!sel || phase === "boot"}
+              disabled={!canSubmit || phase === "boot"}
               className={`glow-pulse font-disp flex w-full items-center justify-center gap-2 border py-3.5 text-lg font-bold tracking-[0.15em] transition-colors ${
-                sel
+                canSubmit
                   ? "border-acc bg-acc text-bg0 hover:bg-acc2"
                   : "cursor-not-allowed border-line bg-panel2 text-faint"
               }`}
             >
               <ShieldCheck size={18} />
-              {phase === "boot" ? "AUTHENTICATING …" : sel ? `AUTHENTICATE — ${sel.callSign}` : "SELECT IDENTITY"}
+              {phase === "boot" ? "AUTHENTICATING …" : "AUTHENTICATE"}
             </button>
             <div className="mt-3 text-center font-data text-[9px] tracking-[0.25em] text-faint">
               UNAUTHORIZED ACCESS IS PROHIBITED · ALL SESSIONS LOGGED
